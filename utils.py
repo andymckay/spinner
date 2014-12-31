@@ -93,4 +93,5 @@ class Spinner(object):
         self.wait_for_file(ssh, 'spinner/create.bash')
         self.run_pty(ssh, 'spinner/install.bash')
         self.run_pty(ssh, 'spinner/pull.bash')
+        self.run_pty(ssh, 'spinner/fixes.bash')
         self.run_pty(ssh, 'spinner/start.bash')
