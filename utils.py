@@ -87,10 +87,12 @@ class Spinner(object):
         ssh = sshclient_from_instance(
             instance, self.pem, user_name='ec2-user')
         self.run_pty(ssh, 'sudo yum install -y git')
+
         self.wait_for_file(ssh, '/usr/bin/git')
         self.run_pty(ssh, 'git clone https://github.com/andymckay/spinner.git')
         self.run_pty(ssh, 'cd spinner && git pull')
-        self.wait_for_file(ssh, 'spinner/create.bash')
+
+        self.wait_for_file(ssh, 'spinner/install.bash')
         self.run_pty(ssh, 'spinner/install.bash')
         self.run_pty(ssh, 'spinner/pull.bash')
         self.run_pty(ssh, 'spinner/fixes.bash')

@@ -6,6 +6,5 @@ export FIG_FILE=~/.mkt.fig.yml
 export FIG_PROJECT_NAME=mkt
 
 echo 'building' >> ~/.spinner.status
-fig up
-
+mkt up
 echo 'complete' >> ~/.spinner.status
