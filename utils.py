@@ -1,50 +1,95 @@
+import logging
 import os
+import sys
+import time
 
 import boto.ec2
 from boto.manage.cmdshell import sshclient_from_instance
 
+log = logging.getLogger('spinner')
 
-conn = boto.ec2.connect_to_region('us-west-2')
-pem = os.path.expanduser('~/.aws/spinner-app.pem')
-
-
-dev_sda1 = boto.ec2.blockdevicemapping.EBSBlockDeviceType()
-dev_sda1.size = 20
-bdm = boto.ec2.blockdevicemapping.BlockDeviceMapping()
-bdm['/dev/sda1'] = dev_sda1
-
-def create():
-    result = conn.run_instances(
-        'ami-99bef1a9',
-        # Red Hat Enterprise Linux 7.0 (HVM), SSD Volume Type
-        key_name='spinner-app',
-        instance_type='t2.micro',
-        security_groups=['default', 'spinner-app'],
-        block_device_map=bdm
-    )
-    return result.instances[0]
-
-def find_running():
-    running = []
-    reservations = conn.get_all_reservations()
-    for reservation in reservations:
-        for instance in reservation.instances:
-            if instance.state == 'running':
-                running.append(instance)
-            else:
-                print instance.state
-    return running
-
-def find():
-    for instance in find_running():
-        ssh = sshclient_from_instance(instance, pem)
-        ssh.put_file('create.bash', '/home/ec2-user')
-        ssh.run('chmod a+x create.bash')
-        #status, stdout, stderr = ssh.run('./create.bash')
-        #print status, stdout, stderr
+# Set up a 20gig partition.
+def partition():
+    dev_sda1 = boto.ec2.blockdevicemapping.EBSBlockDeviceType()
+    dev_sda1.size = 20
+    bdm = boto.ec2.blockdevicemapping.BlockDeviceMapping()
+    bdm['/dev/xvdb'] = dev_sda1
+    return bdm
 
 
+class Spinner(object):
 
-if __name__=='__main__':
-    #create()
-    find()
+    def __init__(self, instance_type, key_name, security_group, region, pem):
+        self.instance_type = instance_type
+        self.key_name = key_name
+        self.security_group = security_group
+        self.region = region
+        self.pem = pem
+        self.conn = boto.ec2.connect_to_region(region)
+
+    def create(self):
+        result = self.conn.run_instances(
+            self.instance_type,
+            key_name=self.key_name,
+            instance_type='t2.medium',
+            security_groups=['default', self.security_group],
+            block_device_map=partition()
+        )
+        return result.instances[0]
+
+    def find_running(self):
+        running = []
+        reservations = self.conn.get_all_reservations()
+        for reservation in reservations:
+            for i in reservation.instances:
+                if i.state == 'running':
+                    running.append(i)
+
+        return running
+
+    def find_state(self, instance):
+        reservations = self.conn.get_all_reservations()
+        for reservation in reservations:
+            for i in reservation.instances:
+                if i.id == instance.id:
+                    return i.state
+
+        raise ValueError('Instance: %s not found.' % (id))
+
+    def wait_for(self, instance, state):
+        for x in range(0, 10):
+            if self.find_state(instance) == state:
+                print 'Instance: %s is %s' % (instance.id, state)
+                return
+
+            time.sleep(5)
+            sys.stdout.write('.')
+
+        raise ValueError('Instance: %s did not report %s.'
+                         % (instance.id, state))
+
+    def wait_for_file(self, ssh, filename):
+        for x in range(0, 10):
+            if ssh.exists(filename):
+                continue
+
+            time.sleep(1)
+            sys.stdout.write('.')
+
+    def run_pty(self, ssh, cmd):
+        log.debug('running: %s' % cmd)
+        channel = ssh.run_pty(cmd)
+        while not channel.exit_status_ready():
+            log.debug(channel.recv(1024))
+
+    def setup(self, instance):
+        log.debug('running setup on instance id: %s' % instance.id)
+        ssh = sshclient_from_instance(
+            instance, self.pem, user_name='ec2-user')
+        self.run_pty(ssh, 'sudo yum install -y git')
+        self.wait_for_file(ssh, '/usr/bin/git')
+        self.run_pty(ssh, 'git clone https://github.com/andymckay/spinner.git')
+        self.wait_for_file(ssh, 'spinner/create.bash')
+        self.run_pty(ssh, 'spinner/install.bash')
+        self.run_pty(ssh, 'spinner/pull.bash')
+        self.run_pty(ssh, 'spinner/start.bash')
